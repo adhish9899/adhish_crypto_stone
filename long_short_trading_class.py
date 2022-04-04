@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from config_read import config_object
 # from pca_backtesting.pca_trading_utils import trade_class, trade_handler
-from pca_trading_utils import trade_class, trade_handler
+from long_short_trading_utils import trade_class, trade_handler
 import copy
 from statsmodels.tsa.stattools import coint
 from class_alphas import alphas
@@ -23,18 +23,17 @@ from methodtools import lru_cache
 # atexit.register(profile.print_stats)
 
 
-'''
-1. Fit regression on "lookback" days or whole dataset
-
-
-'''
-
+## Calcuating features at the time of entry.
 ti_dict = {"r_square": [[21]]}
         #    "dist_corr_coeff": [[]],}
 
 ti_dict = {}
 
-class pca_trading_strategy:
+class long_short_trading_strategy:
+
+    '''
+    Aim to backtest long-short trading strategy. 
+    '''
 
     trade_stats = {}
     trade_manager = trade_handler()
@@ -48,16 +47,14 @@ class pca_trading_strategy:
 
         '''
         PARAMETERS:
+        -----------------------------
         1. data: pd.DataFrame
-            All FO stocks historical data. 
+            All  symbols historical data. 
 
         2. timestamp: pd.timestamp
             pd.Timestamp object of (current data)/(last date of data.index[-1]) 
-
-        3. resultsDf: pd.DataFrame
-            All quarterly results date dataFrame of all fo stocks
         
-        4. pair_list_class: calculation_pairs object from "long_short_trading_utils"
+        3. pair_list_class: calculation_pairs object from "long_short_trading_utils"
             Used to get pair list of current date.
         '''
 
@@ -77,6 +74,23 @@ class pca_trading_strategy:
 
     @staticmethod
     def get_rolling_df(df, window, type_, array_type="pandas"):
+
+        '''
+        PARAMETERS:
+        -----------------------------
+        1. df: pd.DataFrame
+            dataframe with stock1 and stock2. 
+
+        2. window: int
+            rolling window to calculate the rolling stats
+        
+        3. type_: str
+            Currently supporting only "std" and "mean"
+        
+        4. array_type: str
+            Currently supporting only "pandas" and "numpy"
+        '''
+
         if array_type == "pandas":
             if type_ == "std":
                 return df.rolling(window=window).std()
@@ -116,12 +130,17 @@ class pca_trading_strategy:
     def normalise_stock_prices(df):
         '''
         1. df: pd.DataFrame
-            dataFrame of 2 stocks(pair) containing lookback data.
+            dataFrame of 2 symbols(pair) containing lookback data.
         '''
         return df/df.iloc[0]
     
     def entry_trade_stats(self, trade_object):
         
+        ''''
+        PARAMETERS:
+        1. trade_object: long_short_trading_utils.trade_class        
+        '''
+
         alphas_class = alphas(self.spread, trade_object.stock1, trade_object.stock2, {}, self.df)
         
         pair_dict = {}
@@ -149,18 +168,10 @@ class pca_trading_strategy:
         return pair_dict
     
         
-    def entry_rule_check(self):
+    def check_entry(self):
         '''
-        PARAMETERS:
-        1. stock1: str, E.g: HDFCBANK
-            Name of stock in leg1 of pair.
-        
-        2. stock2: str. E.g: KOTAKBANK
-            Name of stock in leg2 of pair. 
-        
-        3. regression_coefs: output of st.linregress
-            contains slope, intercept, rvalue
-        ''' 
+        Filtering trade on several predefined rules as per config.
+        '''
 
         trade_passing_entry_rule = []
 
@@ -180,8 +191,8 @@ class pca_trading_strategy:
             sigma_spread = (self.spread - mean_)/std_
         
         elif config_object.spread_type == "return_bar_regression":
-            rolling_std = pca_trading_strategy.get_rolling_df(self.spread, config_object.bbands_lookback, "std", array_type=config_object.data_structure)
-            rolling_mean = pca_trading_strategy.get_rolling_df(self.spread, config_object.bbands_lookback, "mean", array_type=config_object.data_structure)
+            rolling_std = long_short_trading_strategy.get_rolling_df(self.spread, config_object.bbands_lookback, "std", array_type=config_object.data_structure)
+            rolling_mean = long_short_trading_strategy.get_rolling_df(self.spread, config_object.bbands_lookback, "mean", array_type=config_object.data_structure)
 
             sigma_spread = [(self.spread[-1] - rolling_mean[-1])/rolling_std[-1]]
         
@@ -209,6 +220,17 @@ class pca_trading_strategy:
     # data_series_dict
     @staticmethod
     def rolling_sum_numpy(a, n):
+        ''''
+        Calculating rolling sum on numpy array.
+
+        PARAMETERS:
+        1. a: numpy array
+            numpy array containing symbol returns
+        
+        2. n: int
+            rolling window. 
+        '''
+
         ret = np.cumsum(a)
         ret[n:] = ret[n:] - ret[:-n]
         return ret[n - 1:]
@@ -217,10 +239,18 @@ class pca_trading_strategy:
     @lru_cache(1)
     @staticmethod
     def get_named_tuple(tuple_name, *features):
+        '''
+        Caching named tuple to make code faster.
+        '''
+
         return namedtuple(tuple_name, features)
 
     
     def get_numpy_xy_arrays(self):
+        '''
+        Get x,y numpy array for stock1 and stock2 to be used to fit linear regression.        
+        '''
+
         x = self.data_series_dict[self.stock1].values
         y = self.data_series_dict[self.stock2].values
 
@@ -260,7 +290,7 @@ class pca_trading_strategy:
     def spread_stats_pandas(self):
 
         '''
-        Fitting linear regression between stock normalised prices of stock1 and stock2
+        Fitting linear regression between stock normalised prices/stock returns of stock1 and stock2
 
         y = B*x + c
 
@@ -290,7 +320,16 @@ class pca_trading_strategy:
             raise NotImplementedError("Spread type: %s not implemented" % config_object.spread_type)
     
     def __target_spread(self, current_spread, upper_thresh=True):
-                
+        '''
+        Calculate target spread at entry. 
+
+        PARAMETERS:
+        1. current_spread: float
+            current sigma value of your entry spread
+        
+        2. upper_thresh: bool
+            Direction of your trade. (+2.5 sigma / -2.5 sigma)
+        '''
         if upper_thresh:
             target_spread = current_spread - (config_object.sigma_entry_upper_threshold - config_object.sigma_exit_upper_threshold)
         
@@ -300,18 +339,7 @@ class pca_trading_strategy:
         return target_spread
     
     
-    def sigma_entry_params(self):
-        '''
-        PARAMETERS:
-        1. stock1: str, E.g: HDFCBANK
-            Name of stock in leg1 of pair.
-        
-        2. stock2: str. E.g: KOTAKBANK
-            Name of stock in leg2 of pair. 
-        
-        3. regression_coefs: output of st.linregress
-            contains slope, intercept, rvalue
-        '''
+    def get_entry_trade_object(self):
 
         spread_mean, spread_std = np.mean(self.spread), np.std(self.spread)
 
@@ -358,21 +386,24 @@ class pca_trading_strategy:
 
 
     def __ignore_pair_list(self):
-        
-        open_trade_list = pca_trading_strategy.trade_manager.open_trade_list
+        '''
+        1. 
+
+
+        '''
+
+
+        open_trade_list = long_short_trading_strategy.trade_manager.open_trade_list
 
         ignore_pair = []
         for trade_object in open_trade_list:
-            pair_name = list(pca_trading_strategy.trade_manager.get_pair_name(trade_object))
+            pair_name = list(long_short_trading_strategy.trade_manager.get_pair_name(trade_object))
             ignore_pair.append(pair_name)
                 
-            # else:
-            #     if (self.timestamp - trade_object.entry_date)/pd.Timedelta('1 hour') < config_object.gap_same_pair_trades:
-            #         ignore_pair.append(pair_name)
-
         return ignore_pair
 
     def calculate_pair_spread(self, stock1, stock2):
+
 
         self.stock1, self.stock2 = stock1, stock2
 
@@ -395,7 +426,7 @@ class pca_trading_strategy:
     def check_entry(self, stock_fo):
         '''
         stock_fo: list
-            All the stocks that in FO at t+1 date. 
+            All the symbols that in FO at t+1 date. 
         '''
 
         ## Initalizing self.pair_list
@@ -405,18 +436,18 @@ class pca_trading_strategy:
         # all_dates_list = [x.date() for x in self.data.index]
         
         ## Ignore stock lists
-        # ignore_pairs = [list(name) for name,count in pca_trading_strategy.trade_manager.pair_trade_count.items() if count >= config_object.max_position_pair]
-        # ignore_stocks = [name for name,count in pca_trading_strategy.trade_manager.stock_trade_count.items() if abs(count) >= config_object.max_position]
+        # ignore_pairs = [list(name) for name,count in long_short_trading_strategy.trade_manager.pair_trade_count.items() if count >= config_object.max_position_pair]
+        # ignore_symbols = [name for name,count in long_short_trading_strategy.trade_manager.stock_trade_count.items() if abs(count) >= config_object.max_position]
 
         ignore_pairs =  []
-        ignore_stocks = []
+        ignore_symbols = []
         current_pos = self.__ignore_pair_list()
         for stock1, stock2 in self.pair_list:
             
             # if len(self.trade_manager.open_trade_list) > 1:
             #     continue
             
-            if stock1 in ignore_stocks or stock2 in ignore_stocks:
+            if stock1 in ignore_symbols or stock2 in ignore_symbols:
                 continue
 
             if [stock1, stock2] in ignore_pairs or [stock2, stock1] in ignore_pairs:
@@ -459,11 +490,11 @@ class pca_trading_strategy:
             else:
                 self.calculate_pair_spread(stock1, stock2)
 
-            entry_check = self.entry_rule_check()
+            entry_check = self.check_entry()
             
             if entry_check:
                 ## We can try different entry functions but only 1 will work at a time
-                trade_object = self.sigma_entry_params()
+                trade_object = self.get_entry_trade_object()
                                                 
                 ## Entry stats of trades
                 trade_object.stats_dict = self.entry_trade_stats(trade_object)
@@ -472,7 +503,7 @@ class pca_trading_strategy:
                     self.sq_off_trades_list.append(trade_object)
 
                 else:
-                    pca_trading_strategy.trade_manager.new_trade(trade_object)
+                    long_short_trading_strategy.trade_manager.new_trade(trade_object)
                     # self.stats_df = pd.concat([self.pnl_stats(trade_object, all_dates_list), self.stats_df])
                     current_pos.append([self.stock1, self.stock2])
                 
