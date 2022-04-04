@@ -1,0 +1,78 @@
+{
+    "run_objective": "BASE CONFIG. RETURN BAR REGRESSION STATS (bband Lookback: 21, bar: 1). FEATURE LOOKBACK: 35",
+    "log_filename": "./misc.log",
+    dump_path: "/home/mohit/crypto/pair_trade/pair_backtesting/corr_backtesting/static_corr/",
+    "print_keys": ["brokerage", "spread_type", "bbands_lookback", "return_bars", "pair_frequency", "pca_pair_file"],
+    "pair_selection_config":{
+        "pair_selection_technique": "pca_pair", # "pca_pair", "sector_wise"
+    },
+    "compute_pair_config":{
+      "stock_price_file": "https://storage.googleapis.com/adhish-bucket/sp500_eod.csv",
+      "pair_dump_path": "/home/mohit/long_short/EOD_pair_analysis/pca_pairs/euclidean_distance/",
+      "sp500_constituents_json": "/home/mohit/long_short/EOD_pair_analysis/sp500_index_construction/sp500_constituents_dict.json",
+      "norm_index": 0, # index of the row in the stock price file to use as normalisation index
+      "return_bars": 0,
+      "start_date": "2010-01-01",
+      "compute_pairs": true,
+      "use_clustering": true,
+      "pca_components": [15],
+      "min_sample": [2],
+      top_n_pair_params: { # "use_clustering": false
+        "seed": 3,
+        "base_file": "",
+        "max_pairs": null,
+        "collect_global_stats": false,
+        "top_percentile": 1, # 1-100
+        "global_file": "",
+        "pair_selection": "local" # "global", "local", null(null means using base file)
+      },
+      "feature_params":{
+        "pairwise": true, # for stockwise=false. If pairwise=true, then we cant use parallel computing.
+        "feature_dict":{
+          "std": [22, 44, 66, 126],
+        }
+      }
+    },
+    "data_config":{
+      "eod_data": "https://storage.googleapis.com/adhish-bucket/sp500_eod.csv",
+      "intraday_data": "",
+      "intraday_data_freq": null # minutes
+    }
+    "strategy_config":{
+        "brokerage": 0.002,
+        "spread_type": "return_bar_regression", #normalised_price_regression, return_bar_regression(a/b)
+        "bbands_lookback": 21,
+        "return_bars": 1, # Number of bars to calculate cumulative return spread
+        "data_structure": "numpy" # "pandas" or "numpy". (Use pandas for normalised_price_regression)
+        "data_resample_freq": null, # in days. To resample intraday data. -> 0.5 means resample to half day.
+        "pca_pair_file": "/home/mohit/long_short/EOD_pair_analysis/pca_pairs/corr_top_n/pca_pair_corr_top_n_1.csv",
+        "norm_trading_lookback": 35, ## Lookback days to construct normalised spread
+        "pca_columns": ["44_2_15"],
+        "combine_pca_columns": "intersection", #Union
+        "pair_frequency": "daily", # daily, intraday
+        "beta_config": {
+          "beta_entry_threshold": 0,
+          "recalculate_entry_beta_thresh": null # Recompute beta by flipping x and y to bring it under the threshold. (0/null means no recalculation)
+          "static_entry_beta": null, # bool
+          "static_beta_update_freq": [0], # hour of day
+        },
+        "run_type_config": {
+            "run_type" : "backtesting", # "backtesting", "stats_only"
+            # calculate "stats" on base file trades
+            "base_file": "" 
+        }
+        "trade_entry_config":{  
+                "entry_sigma_threshold": 2.5,
+        },
+        "trade_exit_config":{
+            "exit_sigma_threshold": 0,
+            "hard_threshold": false
+        },
+        stop_loss_config:{
+            "rolling_stoploss": true,
+            "stoploss_multiplier": 2
+        }
+    }
+}
+
+
