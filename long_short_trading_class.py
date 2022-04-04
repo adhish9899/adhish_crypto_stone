@@ -387,12 +387,9 @@ class long_short_trading_strategy:
 
     def __ignore_pair_list(self):
         '''
-        1. 
-
-
+        Returns:
+            All the current open positions
         '''
-
-
         open_trade_list = long_short_trading_strategy.trade_manager.open_trade_list
 
         ignore_pair = []
@@ -404,6 +401,14 @@ class long_short_trading_strategy:
 
     def calculate_pair_spread(self, stock1, stock2):
 
+        '''
+        PARAMETERS:
+            1. stock1: str
+                Name of first symbol
+            
+            2. stock2: str
+                Name of second symbol        
+        '''
 
         self.stock1, self.stock2 = stock1, stock2
 
@@ -423,22 +428,18 @@ class long_short_trading_strategy:
                 self.spread_stats_numpy()
 
     # @profile
-    def check_entry(self, stock_fo):
+    def check_entry(self, tradeable_securities):
         '''
-        stock_fo: list
-            All the symbols that in FO at t+1 date. 
+        Parameters:
+            1. tradeable_securities: list
+                All the symbols that are currently tradeable on the exchange.        
+        
+        Checks for entry signals.
         '''
 
         ## Initalizing self.pair_list
         self.get_pair_list(self.timestamp.to_pydatetime())
         
-        ## All dates list
-        # all_dates_list = [x.date() for x in self.data.index]
-        
-        ## Ignore stock lists
-        # ignore_pairs = [list(name) for name,count in long_short_trading_strategy.trade_manager.pair_trade_count.items() if count >= config_object.max_position_pair]
-        # ignore_symbols = [name for name,count in long_short_trading_strategy.trade_manager.stock_trade_count.items() if abs(count) >= config_object.max_position]
-
         ignore_pairs =  []
         ignore_symbols = []
         current_pos = self.__ignore_pair_list()
@@ -462,7 +463,7 @@ class long_short_trading_strategy:
                 continue
 
             # Checking if stock is in FO
-            if (stock1 not in stock_fo) or (stock2 not in stock_fo):
+            if (stock1 not in tradeable_securities) or (stock2 not in tradeable_securities):
                 continue
 
             if config_object.static_entry_beta:
@@ -510,13 +511,26 @@ class long_short_trading_strategy:
     ####
     @staticmethod
     def calculate_stock_return(entry_price, current_price):
-        
+        '''
+        PARAMETERS:
+            1. entry_price: float
+                Entry price at which the security was bought.
+            
+            2. current_price: float
+                Current price of the security
+
+        '''
+
         entry_price *= (1 + config_object.brokerage) if entry_price > 0 else (1 - config_object.brokerage)
 
         return ((current_price - abs(entry_price))/abs(entry_price)) * np.sign(entry_price)
     
     def m2m_positions(self):
         
+        '''
+        Calculates the M2M of the all the current open positon.        
+        '''
+
         for trade_object in self.trade_manager.open_trade_list:
 
             current_stock1_price = self.data.loc[self.timestamp, trade_object.stock1]
@@ -540,7 +554,15 @@ class long_short_trading_strategy:
     
     
     def target_pft_check(self, trade_object, regression_spread):
-        
+        '''
+        Checks for trades that have reached their target profit.
+
+        PARAMETERS
+            1. trade_object: object
+            
+            2. regression_spread: float
+                Cureent spread value        
+        '''
         target = trade_object.target
 
         if trade_object.target_operator == "gte":
@@ -552,6 +574,15 @@ class long_short_trading_strategy:
                 trade_object.target_hit = True
     
     def stop_loss_check(self, trade_object, regression_spread, in_sample_data):
+        '''
+        Checks for trades that have reached their target profit.
+
+        PARAMETERS
+            1. trade_object: object
+            
+            2. regression_spread: float
+                Cureent spread value        
+        '''
         
         stoploss = (in_sample_data[-1] - trade_object.target) * config_object.rolling_stoploss_mult
         use_rolling_stop = (not config_object.sigma_exit_hard_threshold)
@@ -640,8 +671,12 @@ class long_short_trading_strategy:
         self.stop_loss_check(trade_object, regression_spread, entry_spread)
 
     
-    def sq_off_position(self, coin_active, force_sq_off=False):
-                
+    def sq_off_position(self, tradeable_securities, force_sq_off=False):
+        
+        '''
+        Square off position position based on the below conditions.         
+        '''
+
         ## Update current m2m
         self.m2m_positions()
 
@@ -676,13 +711,13 @@ class long_short_trading_strategy:
                 continue
             
             ## not in fo
-            elif (trade_object.stock1 not in coin_active):
+            elif (trade_object.stock1 not in tradeable_securities):
                 del_trade_obj_indx.append(obj_index)
                 m2m_sum += trade_object.m2m
                 config_object.masterlog.info("%s stock removed from FO %s" %(trade_object.stock1, self.timestamp.date()))
                 continue
             
-            elif (trade_object.stock2 not in coin_active):
+            elif (trade_object.stock2 not in tradeable_securities):
                 del_trade_obj_indx.append(obj_index)
                 m2m_sum += trade_object.m2m
                 config_object.masterlog.info("%s stock removed from FO %s" %(trade_object.stock2, self.timestamp.date()))
