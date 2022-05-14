@@ -25,9 +25,3 @@ for i in range(1000):
     data["time"] = dt.datetime.now()
     all_data = pd.concat([all_data, data])
     time.sleep(1)
-
-
-
-
-
-clear
