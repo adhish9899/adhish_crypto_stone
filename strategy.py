@@ -1,5 +1,4 @@
 
-import re
 import pandas as pd
 import uuid
 import datetime as dt
@@ -26,7 +25,7 @@ def get_bid_ask_dict():
     return bid_ask_dict
 
 ## USING IT FROM "bisect" MODULE and updating it to add reverse as well. 
-def insort(a, x, reverse=False, lo=0, hi=None):
+def insort(a, x, reverse=False, insert=True, lo=0, hi=None):
     if lo < 0:
         raise ValueError('lo must be non-negative')
     if hi is None:
@@ -40,9 +39,17 @@ def insort(a, x, reverse=False, lo=0, hi=None):
             hi = mid
 
         else: lo = mid+1
-    a.insert(lo, x)
+        
+    if insert:        
+        a.insert(lo, x)
+    
+    else:
+        if lo != len(a) and a[lo-1] == x:
+            return lo-1
 
+        return -1
 
+##
 class create_order(object):
     def __init__(self, symbol, price, qty, side, time, filled_qty, order_id):
         self.exchange_order_id = str() # exchange order id. (not used in this example)
@@ -168,6 +175,7 @@ class market_maker:
         if (abs(theo_price_diff) % self.offset) == 0:
             num_depth_to_change = int(abs(theo_price_diff) / self.offset)
 
+        
 
     def send_orders(self):
         if self.prev_theo_price is None:
@@ -198,56 +206,16 @@ class market_maker:
             ## just check for any executed orders and place them again. 
             max_len = max(len(self.open_bid_order_list), len(self.open_ask_order_list))
             for i in range(max_len-1, 0, -1):
-
-                if i < len(self.open_ask_order_list) and self.open_ask_order_list[i].status == "partial":
-                    ## WORKING ON IT
-                    pass
-
                 if i < len(self.open_ask_order_list) and self.open_ask_order_list[i].status == "rejected":
                     id_ = uuid.uuid4()
                     order_ask = create_order(self.symbol, self.open_ask_order_list[i].price, self.qty, "ask", dt.datetime.now(), 0, id_)
                     self.open_ask_order_list.pop(i)
                     insort(self.open_ask_order_list, order_ask)
 
-                ###
-                if i < len(self.open_bid_order_list) and self.open_bid_order_list[i].status == "partial":
-                    ## WORKING ON IT
-                    pass
 
                 if i < len(self.open_bid_order_list) and self.open_bid_order_list[i].status == "rejected":
                     id_ = uuid.uuid4()
                     order_bid = create_order(self.symbol, self.open_bid_order_list[i].price, self.qty, "bid", dt.datetime.now(), 0, id_)
                     self.open_bid_order_list.pop(i)
                     insort(self.open_bid_order_list, order_bid, reverse=True)
-
-            # for order in self.open_ask_order_list:
-            #     if order.status == "partial": # incase of partial fill
-            #         order_id_ask = uuid.uuid4()
-            #         price_ = order.price
-            #         qty_ = self.qty - order.filled_qty
-            #         order_ask = order(self.symbol, price_, qty_, "ask", dt.datetime.now(), 0, order_id_ask)
-            #         insort(self.open_ask_order_list, order_ask)
-                
-            #     if order.status == "open":
-            #         break
-            
-            # for order in self.open_bid_order_list:
-            #     if order.status == "filled":
-            #         order_id_bid = uuid.uuid4()
-            #         price_ = order.price
-            #         order_bid = order(self.symbol, price_, self.qty, "bid", dt.datetime.now(), 0, order_id_bid)
-            #         insort(self.open_bid_order_list, order_bid, reverse=True)
-                                
-            #     if order.status == "partial": # incase of partial fill
-            #         order_id_bid = uuid.uuid4()
-            #         price_ = order.price
-            #         qty_ = self.qty - order.filled_qty
-            #         order_bid = order(self.symbol, price_, qty_, "bid", dt.datetime.now(), 0, order_id_bid)
-            #         insort(self.open_bid_order_list, order_bid, reverse=True)
-
-                
-            #     if order.status == "open":
-            #         break
-
-
 
