@@ -276,7 +276,11 @@ class market_maker:
         total_pending_buy_value = sum([x.price*x.qty for x in self.open_bid_order_list if x.status == "pending"])
         total_pending_sell_value = sum([x.price*x.qty for x in self.open_ask_order_list if x.status == "pending"])
 
-        
+        min_qty_traded = min(total_buy_qty, total_sell_qty)
+        if min_qty_traded == 0:
+            pass
+        else:
+            pass
 
 
 if __name__ == "__main__":
