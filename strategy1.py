@@ -42,7 +42,7 @@ class create_order(object):
         self.qty = qty
         self.side = side
         self.time = time
-        self.filled_qty = filled_qty
+        self.filled_qty = 0
         self.order_id = order_id
         self.status = "pending" # pending, open, filled, partial, rejected
 
@@ -154,7 +154,7 @@ class market_maker:
                     self.open_bid_order_list[i], self.open_bid_order_list[loc_order_bid] = self.open_bid_order_list[loc_order_bid], self.open_bid_order_list[i]
 
                 ###
-                self.handle_order(self.open_bid_order_list[i], new_bid_price)
+                self.open_bid_order_list[i] = self.handle_order(self.open_bid_order_list[i], new_bid_price)
                 
             else:
                 loc_order_ask = insort(open_ask_price_list, new_ask_price, reverse=False, insert=False)
@@ -163,10 +163,13 @@ class market_maker:
                 if loc_order_ask >= 0: # there exist an order with similar price
                     self.open_ask_order_list[i], self.open_ask_order_list[loc_order_ask] = self.open_ask_order_list[loc_order_ask], self.open_ask_order_list[i]
                 
-                self.handle_order(self.open_ask_order_list[i], new_ask_price)
+                self.open_ask_order_list[i] = self.handle_order(self.open_ask_order_list[i], new_ask_price)
+
+        ##    
+        self.prev_theo_price = self.theo_price
+
 
     
-
     def on_cancel_order(self, order, qty=None, price=None):
         # self.xcchn.cancel_order(order)
         qty = self.qty if qty is None else qty
@@ -187,10 +190,10 @@ class market_maker:
         
         if order.status == "filled":
             if order.side == "ask":
-                order = copy.deepcopy(self.open_ask_order_list[0])
+                order = copy.deepcopy(self.partial_ask_order[0])
             
             elif order.side == "bid":
-                order = copy.deepcopy(self.open_bid_order_list[0])
+                order = copy.deepcopy(self.partial_bid_order[0])
             
         elif order.status == "partial": # order status 
             if abs(order.price - price)/self.step_size < 2: # If partial order is just two step from theo, dont do anything.
@@ -206,23 +209,25 @@ class market_maker:
             order = create_order(self.symbol, price, remaining_qty, order.side, dt.datetime.now(), uuid.uuid4())
 
         if order.side == "ask":
-            self.open_ask_order_list = []
+            self.partial_ask_order = []
         
         elif order.side == "bid":
-            self.open_bid_order_list = []
+            self.partial_bid_order = []
+        
+        return order
             
     ###
     def handle_order(self, order, order_price):
-        
-        if order.side == "ask" and self.partial_ask_order:
-            self.on_partial_order(order, order_price)
-        
-        elif order.side == "bid" and self.partial_bid_order:
-            self.on_partial_order(order, order_price)
-        
+
         if order.status == "pending":
             pass
+
+        elif order.side == "ask" and self.partial_ask_order:
+            order = self.on_partial_exec(order, order_price)
         
+        elif order.side == "bid" and self.partial_bid_order:
+            order = self.on_partial_exec(order, order_price)
+                
         elif order.status == "open":
             if order.price != order_price:
                 order = self.on_cancel_order(order, price=order_price)
@@ -235,17 +240,46 @@ class market_maker:
         
         else:
             raise Exception("Invalid order status %s" % order.status)
+        
+        return order
 
-                
+    def get_stats(self):
+        
+        '''
+        1. Realised Profit
+        2. Unrealised Profit
+        3. Total traded quantity/value
+        4. Pending orders quantity/value
+        '''
+        all_buy_trades = [(x.price, x.filled_qty, x.time) for x in self.filled_order_list if x.side == "bid"]
+        all_sell_trades = [(x.price, x.filled_qty, x.time) for x in self.filled_order_list if x.side == "ask"]
 
+        all_buy_trades.sort(key=lambda x: x[2])
+        all_sell_trades.sort(key=lambda x: x[2])
 
+        # check for partial fill
+        if self.open_ask_order_list[0].status == "partial":
+            all_buy_trades.append((self.open_ask_order_list[0].price, self.open_ask_order_list[0].filled_qty, self.open_ask_order_list[0].time))
 
-                        
+        if self.open_bid_order_list[0].status == "partial":
+            all_sell_trades.append((self.open_bid_order_list[0].price, self.open_bid_order_list[0].filled_qty, self.open_bid_order_list[0].time))
+        
+        total_buy_qty = sum([x[1] for x in all_buy_trades])
+        total_sell_qty = sum([x[1] for x in all_sell_trades])
+
+        total_buy_value = sum([x[0]*x[1] for x in all_buy_trades])
+        total_sell_value = sum([x[0]*x[1] for x in all_sell_trades])
+
+        total_pending_buy_qty = sum([x.qty for x in self.open_bid_order_list if x.status == "pending"])
+        total_pending_sell_qty = sum([x.qty for x in self.open_ask_order_list if x.status == "pending"])
+
+        total_pending_buy_value = sum([x.price*x.qty for x in self.open_bid_order_list if x.status == "pending"])
+        total_pending_sell_value = sum([x.price*x.qty for x in self.open_ask_order_list if x.status == "pending"])
+
+        
+
 
 if __name__ == "__main__":
     mm_trading = market_maker("BTCUSDT", 5, 1, 2, 2)
     mm_trading.on_market_data(99, 101)
     mm_trading.print_all_orders()
-
-
-
