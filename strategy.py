@@ -50,11 +50,6 @@ class create_order(object):
     def place_limit_order(self):
         pass
 
-    def cancel_order(self):
-        # self.send_cancel_order_request(self.exchange_order_id)
-        # self.status = self.get_exchange_ack(self..exchange_order_id)
-        self.status = "cancelled"
-
     def __lte__(self, order_):
         if order_.price > self.price:
             return True
