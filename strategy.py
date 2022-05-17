@@ -1,6 +1,7 @@
 
 import uuid
 import datetime as dt
+import copy
 
 '''
 1. To Do. (lte, gte)
@@ -34,14 +35,14 @@ def insort(a, x, reverse=False, insert=True, lo=0, hi=None):
 
 ##
 class create_order(object):
-    def __init__(self, symbol, price, qty, side, time, filled_qty, order_id):
+    def __init__(self, symbol, price, qty, side, time, order_id):
         self.exchange_order_id = str() # exchange order id. (not used in this example)
         self.symbol = symbol
         self.price = price
         self.qty = qty
         self.side = side
         self.time = time
-        self.filled_qty = filled_qty
+        self.filled_qty = 0
         self.order_id = order_id
         self.status = "pending" # pending, open, filled, partial, rejected
 
@@ -88,10 +89,7 @@ class market_maker:
     prev_theo_price = None
     open_bid_order_list = []
     open_ask_order_list = []
-    filled_bid_order_list = []
-    filled_ask_order_list = []
-    pending_close_order_list = []
-
+    filled_order_list = []
 
     def __init__(self, symbol, n_orders, offset, step_size, qty=10):
         ## USER DEFINED INPUTS
@@ -99,301 +97,193 @@ class market_maker:
         self.n_orders = n_orders
         self.offset = offset
         self.step_size = step_size
-        self.qty = qty
-
-    def on_market_data(self, best_bid, best_ask):
-        self.theo_price = (best_bid + best_ask) / 2
-        
-        self.close_pending_cancel_orders()
-        self.update_all_orders_status()
-        self.check_filled_orders()
-        self.send_orders()
-
-    def close_pending_cancel_orders(self):
-        for i in range(len(self.pending_close_order_list)-1, 0, -1):
-            self.get_exchange_ack(self.pending_close_order_list[i])
-            if self.pending_close_order_list[i].status == "open":
-                self.pending_close_order_list[i].cancel_order()
-            
-            elif self.pending_close_order_list[i].status == "rejected":
-                pass
-
-            elif self.pending_close_order_list[i].status == "partial":
-                self.on_order_part_exec(self.pending_close_order_list[i])
-                if self.pending_close_order_list[i].side == "bid":
-                    self.open_bid_order_list.pop(1)
-                
-                else:
-                    self.open_ask_order_list.pop(1)
-            
-            elif self.pending_close_order_list[i].status == "filled":
-                if self.pending_close_order_list[i].side == "bid":
-                    self.filled_bid_order_list.append(self.pending_close_order_list[i])
-                
-                else:
-                    self.filled_ask_order_list.append(self.pending_close_order_list[i])
-            
-            else: # cancelled. Nothing to do. 
-                pass
-            
-            self.pending_close_order_list.pop(i)
+        self.qty = qty        
     
     def get_exchange_ack(self, order):
         ## get "ack" from the exchange. 
         # order.status = self.get_exchange_ack(order.exchange_order_id) ->  in case of exchange api. 
         order.status = "open"
 
-    def update_all_orders_status(self):
-        max_len = max(len(self.open_bid_order_list), len(self.open_ask_order_list))
-        for i in range(max_len):
-            if i < len(self.open_ask_order_list) and self.open_ask_order_list[i].status != "filled":
-                self.get_exchange_ack(self.open_ask_order_list[i])
+    def create_intial_ladder_orders(self):
+        ## Creating inital orders
+        for i in range(self.n_orders):
+            order_id_ask = uuid.uuid4()
+            order_id_bid = uuid.uuid4()
 
-            if i < len(self.open_bid_order_list) and self.open_bid_order_list[i].status != "filled":
-                self.get_exchange_ack(self.open_bid_order_list[i])
-
-    def check_filled_orders(self):
-        ## check for filled orders.
-        
-        max_len = max(len(self.open_bid_order_list), len(self.open_ask_order_list))
-        order_pop_list = []
-        for i in range(max_len):
-            if i < len(self.open_ask_order_list) and self.open_ask_order_list[i].status == "filled":
-                self.filled_ask_order_list.append(self.open_ask_order_list[i])
-                order_pop_list.append((i, "ask"))
-
-            if i < len(self.open_bid_order_list) and self.open_bid_order_list[i].status == "filled":
-                self.filled_bid_order_list.append(self.open_bid_order_list[i])
-                order_pop_list.append((i, "bid"))
-
-            if (i < len(self.open_bid_order_list) and self.open_bid_order_list[i].status == "open") and \
-                (i < len(self.open_ask_order_list) and self.open_ask_order_list[i].status == "open"):
-                # since the list is sorted, it means no further orders are executed.
-                break
-        
-        ## reversing the list to pop the orders in the correct order.
-        order_pop_list.sort(key=lambda x: x[0], reverse=True)
-        for indx, side in order_pop_list:
-            if side == "ask":
-                self.open_ask_order_list.pop(indx)
-            else:
-                self.open_bid_order_list.pop(indx)
+            ## placing limit orders
+            order_ask = create_order(self.symbol, self.theo_price + self.offset + i*self.step_size, self.qty, "ask", dt.datetime.now(), 0, order_id_ask)
+            order_bid = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "bid", dt.datetime.now(), 0, order_id_bid)
+            self.open_ask_order_list.insert(i, order_ask)
+            self.open_bid_order_list.insert(i, order_bid)
 
 
-    def on_order_rejected(self, order, i):
-        ## recreate the same order
-        id_ = uuid.uuid4()
-        order_ = create_order(self.symbol, self.open_ask_order_list[i].price, self.qty, order.side, dt.datetime.now(), 0, id_)
-        if order.side == "bid":
-            self.open_ask_order_list.pop(i)
-            insort(self.open_ask_order_list, order_)
+    def on_market_data(self, best_bid, best_ask):
+        self.theo_price = (best_bid + best_ask) / 2
 
-        else:
-            self.open_bid_order_list.pop(i)
-            insort(self.open_bid_order_list, order_, reverse=True)
-
-    def on_order_part_exec(self, part_order):
-        part_order.cancel_order()
-        if part_order.side == "bid":
-            remaining_qty = self.qty - part_order.filled_qty
-            self.filled_bid_order_list.append(self.open_bid_order_list.pop(0))
-            order_ = create_order(self.symbol, part_order.price, remaining_qty, "bid", dt.datetime.now(), 0, uuid.uuid4())
-            self.open_bid_order_list.insert(0, order_)
-
-        else:
-            remaining_qty = self.qty - part_order.filled_qty
-            self.filled_ask_order_list.append(self.open_ask_order_list.pop(0))
-            order_ = create_order(self.symbol, part_order.price, remaining_qty, "ask", dt.datetime.now(), 0, uuid.uuid4())
-            self.open_ask_order_list.insert(0, order_)
-
-    # def print_all_orders(self):
-    #     print("open bid order list: ", [x.price for x in self.open_bid_order_list])
-    #     print("open ask order list: ", [x.price for x in self.open_ask_order_list])
-    #     print("filled bid order list: ", [(x.price, x.filled_qty) for x in self.filled_bid_order_list])
-    #     print("filled ask order list: ", [(x.price, x.filled_qty) for x in self.filled_bid_order_list])
-        # print("pending close order list: ", self.pending_close_order_list)
-
-
-    
-
-    def send_orders(self):
         ## Creating initial orders
         if self.prev_theo_price is None:
             self.prev_theo_price = self.theo_price
-            
-            ## Creating inital orders
-            for i in range(self.n_orders):
-                order_id_ask = uuid.uuid4()
-                order_id_bid = uuid.uuid4()
+            self.create_intial_ladder_orders()
+            ## Just to close the function. Not needed. Can be removed as well. 
+            return None
+              
+        ## Checking for new orders
+        theo_change = self.theo_price - self.prev_theo_price
 
-                ## placing limit orders
-                order_ask = create_order(self.symbol, self.theo_price + self.offset + i*self.step_size, self.qty, "ask", dt.datetime.now(), 0, order_id_ask)
-                order_bid = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "bid", dt.datetime.now(), 0, order_id_bid)
-                self.open_ask_order_list.insert(i, order_ask)
-                self.open_bid_order_list.insert(i, order_bid)
+        # check for partial filled orders
+        ## Assuming only one partial order at a time. (No latency or other exchange related issues)
+        self.partial_ask_order = [self.open_ask_order_list] if self.open_ask_order_list[0].status == "partial" else []
+        self.partial_bid_order = [self.open_bid_order_list] if self.open_bid_order_list[0].status == "partial" else []
+        
+        open_ask_price_list = []
+        open_bid_price_list = []
+        if (abs(theo_change) % self.offset) == 0:
+            open_ask_price_list = [x.price for x in self.open_ask_order_list if x.status in ["open", "pending"]]
+            open_bid_price_list = [x.price for x in self.open_bid_order_list if x.status in ["open", "pending"]]
+
+        for i in range(self.n_orders):
+            new_ask_price = self.theo_price + self.offset + i*self.step_size
+            new_bid_price = self.theo_price - self.offset - i*self.step_size
+            
+            # adjusting bid orders first. 
+            if theo_change <= 0:
+                loc_order_bid = insort(open_bid_price_list, new_bid_price, reverse=True, insert=False)
+                self.get_exchange_ack(self.open_bid_order_list[i])
+
+                if loc_order_bid >= 0: # there exist an order with similar price
+                    self.open_bid_order_list[i], self.open_bid_order_list[loc_order_bid] = self.open_bid_order_list[loc_order_bid], self.open_bid_order_list[i]
+
+                ###
+                self.open_bid_order_list[i] = self.handle_order(self.open_bid_order_list[i], new_bid_price)
+                
+            else:
+                loc_order_ask = insort(open_ask_price_list, new_ask_price, reverse=False, insert=False)
+                self.get_exchange_ack(self.open_ask_order_list[i])
+
+                if loc_order_ask >= 0: # there exist an order with similar price
+                    self.open_ask_order_list[i], self.open_ask_order_list[loc_order_ask] = self.open_ask_order_list[loc_order_ask], self.open_ask_order_list[i]
+                
+                self.open_ask_order_list[i] = self.handle_order(self.open_ask_order_list[i], new_ask_price)
+
+        ##    
+        self.prev_theo_price = self.theo_price
+
+
+    
+    def on_cancel_order(self, order, qty=None, price=None):
+        # self.xcchn.cancel_order(order)
+        qty = self.qty if qty is None else qty
+        price = order.price if price is None else price
+        
+        return create_order(self.symbol, price, qty, order.side, dt.datetime.now(), order.order_id)
+
+    def on_rejected_order(self, order, price):
+        return create_order(self.symbol, price, self.qty, order.side, dt.datetime.now(), 0, uuid.uuid4())
+
+    ##
+    def on_order_exec(self, order, price):
+        self.filled_order_list(copy.deepcopy(order))
+        return create_order(self.symbol, price, self.qty, order.side, dt.datetime.now(), uuid.uuid4())
+
+
+    def on_partial_exec(self, order, price):
+        
+        if order.status == "filled":
+            if order.side == "ask":
+                order = copy.deepcopy(self.partial_ask_order[0])
+            
+            elif order.side == "bid":
+                order = copy.deepcopy(self.partial_bid_order[0])
+            
+        elif order.status == "partial": # order status 
+            if abs(order.price - price)/self.step_size < 2: # If partial order is just two step from theo, dont do anything.
+                ## check for the ordering in the orderbook. (to do)
+                return None
+            
+            else:
+                remaining_qty = order.qty - order.filled_qty
+                order = self.on_cancel_order(order, remaining_qty)
+
+        else:
+            remaining_qty = order.qty - order.filled_qty
+            order = create_order(self.symbol, price, remaining_qty, order.side, dt.datetime.now(), uuid.uuid4())
+
+        if order.side == "ask":
+            self.partial_ask_order = []
+        
+        elif order.side == "bid":
+            self.partial_bid_order = []
+        
+        return order
+            
+    ###
+    def handle_order(self, order, order_price):
+
+        if order.status == "pending":
+            pass
+
+        elif order.side == "ask" and self.partial_ask_order:
+            order = self.on_partial_exec(order, order_price)
+        
+        elif order.side == "bid" and self.partial_bid_order:
+            order = self.on_partial_exec(order, order_price)
+                
+        elif order.status == "open":
+            if order.price != order_price:
+                order = self.on_cancel_order(order, price=order_price)
+                
+        elif order.status in ["rejected"]:
+            order = self.on_rejected_order(order, order_price)
+
+        elif order.status == "filled":
+            order = self.on_order_exec(order, order_price)
         
         else:
-            theo_change = self.theo_price - self.prev_theo_price
+            raise Exception("Invalid order status %s" % order.status)
+        
+        return order
 
-            # check for partial filled orders
-            ## Assuming only one partial order at a time. (No latency or other exchange related issues)
-            partial_ask_order = [self.open_ask_order_list] if self.open_ask_order_list[0].status == "partial" else []
-            partial_bid_order = [self.open_bid_order_list] if self.open_bid_order_list[0].status == "partial" else []
+    def get_stats(self):
+        
+        '''
+        1. Realised Profit
+        2. Unrealised Profit
+        3. Total traded quantity/value
+        4. Pending orders quantity/value
+        '''
+        all_buy_trades = [(x.price, x.filled_qty, x.time) for x in self.filled_order_list if x.side == "bid"]
+        all_sell_trades = [(x.price, x.filled_qty, x.time) for x in self.filled_order_list if x.side == "ask"]
 
-            if (abs(theo_change) % self.offset) == 0:
-                open_ask_price_list = [x.price for x in self.open_ask_order_list if x.status in ["open", "pending"]]
-                open_bid_price_list = [x.price for x in self.open_bid_order_list if x.status in ["open", "pending"]]
+        all_buy_trades.sort(key=lambda x: x[2])
+        all_sell_trades.sort(key=lambda x: x[2])
 
-            for i in range(self.n_orders):
-                new_ask_price = self.theo_price + self.offset + i*self.step_size
-                new_bid_price = self.theo_price - self.offset - i*self.step_size
+        # check for partial fill
+        if self.open_ask_order_list[0].status == "partial":
+            all_buy_trades.append((self.open_ask_order_list[0].price, self.open_ask_order_list[0].filled_qty, self.open_ask_order_list[0].time))
 
-                if (abs(theo_change) % self.offset) == 0:
-                    loc_order_bid = insort(open_bid_price_list, new_bid_price, reverse=True, insert=False)
-                    
-                    # Handling partial fill
-                    ## If theo price has not changed, then we will not make any changes to the partial order
-                    if (i == 0) and partial_bid_order and partial_bid_order[0].price != new_bid_price:
-                        self.on_order_part_exec("bid", partial_bid_order[0], new_bid_price)
+        if self.open_bid_order_list[0].status == "partial":
+            all_sell_trades.append((self.open_bid_order_list[0].price, self.open_bid_order_list[0].filled_qty, self.open_bid_order_list[0].time))
+        
+        total_buy_qty = sum([x[1] for x in all_buy_trades])
+        total_sell_qty = sum([x[1] for x in all_sell_trades])
 
-                    elif loc_order_bid >= 0: # We have an order with the same price in the orderbook
-                        if self.open_bid_order_list[loc_order_bid].status == "rejected":
-                            self.on_order_rejected(self.open_bid_order_list[loc_order_bid], loc_order_bid)
-    
-                        # Re-ordering the ladder. 
-                        self.open_bid_order_list[i], self.open_bid_order_list[loc_order_bid] = self.open_bid_order_list[loc_order_bid], self.open_bid_order_list[i]
-                    
-                    elif i < len(self.open_bid_order_list):
-                        if self.open_bid_order_list[i].status == "open":
-                            self.open_bid_order_list[i].cancel_order()
-                        
-                        elif self.open_bid_order_list[i].status == "pending":
-                            self.pending_close_order_list.append(self.open_bid_order_list[i])
-                        
-                        self.open_bid_order_list.pop(i)
+        total_buy_value = sum([x[0]*x[1] for x in all_buy_trades])
+        total_sell_value = sum([x[0]*x[1] for x in all_sell_trades])
 
-                        order_id_bid = uuid.uuid4()
-                        order_bid = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "bid", dt.datetime.now(), 0, order_id_bid)
-                        insort(self.open_bid_order_list, order_bid, reverse=True)
+        total_pending_buy_qty = sum([x.qty for x in self.open_bid_order_list if x.status == "pending"])
+        total_pending_sell_qty = sum([x.qty for x in self.open_ask_order_list if x.status == "pending"])
 
-                    else: # Some orders were filled and we need to create new ones to maintain ladder size. 
-                        order_id_bid = uuid.uuid4()
-                        order_bid = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "bid", dt.datetime.now(), 0, order_id_bid)
-                        insort(self.open_bid_order_list, order_bid, reverse=True)
-                    
-                    ## Ask orders
-                    loc_order_ask = insort(open_ask_price_list, new_ask_price, reverse=False, insert=False)
-                    if (i == 0) and partial_ask_order and partial_ask_order[0].price != new_ask_price:
-                        self.on_order_part_exec("ask", partial_ask_order[0], new_ask_price)
+        total_pending_buy_value = sum([x.price*x.qty for x in self.open_bid_order_list if x.status == "pending"])
+        total_pending_sell_value = sum([x.price*x.qty for x in self.open_ask_order_list if x.status == "pending"])
 
-                    elif loc_order_ask >= 0:
-                        if self.open_ask_order_list[loc_order_ask].status == "rejected":
-                            self.on_order_rejected(self.open_ask_order_list[loc_order_ask], loc_order_ask)
-    
-                        else:
-                            self.open_ask_order_list[i], self.open_ask_order_list[loc_order_ask] = self.open_ask_order_list[loc_order_ask], self.open_ask_order_list[i]
-                    
-                    elif i < len(self.open_ask_order_list):
-                        if self.open_ask_order_list[i].status == "open":
-                            self.open_ask_order_list[i].cancel_order()
-                        
-                        elif self.open_ask_order_list[i].status == "pending":
-                            self.pending_close_order_list.append(self.open_ask_order_list[i])
-                        
-                        self.open_ask_order_list.pop(i)
+        min_qty_traded = min(total_buy_qty, total_sell_qty)
+        if min_qty_traded == 0:
+            pass
+        else:
+            pass
 
-                        order_id_ask = uuid.uuid4()
-                        order_ask = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "ask", dt.datetime.now(), 0, order_id_ask)
-                        insort(self.open_ask_order_list, order_ask)
-
-                    else:
-                        order_id_ask = uuid.uuid4()
-                        order_ask = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "ask", dt.datetime.now(), 0, order_id_ask)
-                        insort(self.open_ask_order_list, order_ask)
-            
-
-                else:
-                    '''
-                    Since theo_change is not a multiple of offset, we need to cancel all orders and create new ones.
-                    Although this approach has several pitfalls, it is the simplest approach. 
-                    But given the objective of the assignment, I will stick to this approach.
-
-                    Following are the major pitfalls:
-                        1. It will require putting new orders and cancelling old unfilled orders, which may violate stock exchange rules.
-                        2. It is no efficient as it will put us in last position to take fill at a particular price.                     
-                    '''
-                    
-                    if (i == 0) and theo_change > 0:
-                        if (i == 0) and partial_ask_order and partial_ask_order[0].price != new_ask_price:
-                            self.on_order_part_exec("ask", partial_ask_order[0], new_ask_price)
-                        
-                        else:
-                            if self.open_ask_order_list[i].status == "pending":
-                                self.pending_close_order_list.append(self.open_ask_order_list[i])
-
-                            else:
-                                self.open_ask_order_list[i].cancel_order()
-
-                            self.open_ask_order_list.pop(i)
-                            order_id_ask = uuid.uuid4()
-                            order_ask = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "ask", dt.datetime.now(), 0, order_id_ask)
-                            self.open_ask_order_list.insert(0, order_ask)
-
-                    
-                    elif (i == 0) and theo_change < 0:
-                        if partial_bid_order and partial_bid_order[0].price != new_bid_price:
-                            self.on_order_part_exec("bid", partial_bid_order[0], new_bid_price)
-                        
-                        else:
-                            if self.open_bid_order_list[i].status == "pending":
-                                self.pending_close_order_list.append(self.open_bid_order_list[i])
-
-                            else:
-                                self.open_bid_order_list[i].cancel_order()
-
-                            self.open_bid_order_list.pop(i)
-                            order_id_bid = uuid.uuid4()
-                            order_bid = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "bid", dt.datetime.now(), 0, order_id_bid)
-                            self.open_bid_order_list.insert(0,order_bid)
-                    
-                    else:
-                        if self.open_bid_order_list[i].status == "pending":
-                            self.pending_close_order_list.append(self.open_bid_order_list[i])
-
-                        else:
-                            self.open_bid_order_list[i].cancel_order()
-
-
-                        if self.open_ask_order_list[i].status == "pending":
-                            self.pending_close_order_list.append(self.open_ask_order_list[i])
-
-                        else:
-                            self.open_ask_order_list[i].cancel_order()
-
-                        self.open_bid_order_list.pop(i)
-                        self.open_ask_order_list.pop(i)
-
-                        order_id_ask = uuid.uuid4()
-                        order_ask = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "ask", dt.datetime.now(), 0, order_id_ask)
-                        self.open_ask_order_list.insert(0, order_ask)
-
-                        self.open_ask_order_list.insert(i, order_ask)
-
-                        order_id_bid = uuid.uuid4()
-                        order_bid = create_order(self.symbol, self.theo_price - self.offset - i*self.step_size, self.qty, "bid", dt.datetime.now(), 0, order_id_bid)
-                        self.open_bid_order_list.insert(i,order_bid)
-
-
-
-
-                        
 
 if __name__ == "__main__":
     mm_trading = market_maker("BTCUSDT", 5, 1, 2, 2)
     mm_trading.on_market_data(99, 101)
     mm_trading.print_all_orders()
-
-
-
-
-            
