@@ -298,10 +298,10 @@ class market_maker:
 
             realised_pnl = (vway_sell_min_qty - vway_buy_min_qty) * min_qty_traded
             if vway_buy_remain is None:
-                unrealised_pnl = (vway_sell_min_qty - best_bid) * min_qty_traded
+                unrealised_pnl = (vway_sell_min_qty - best_ask) * min_qty_traded
             
             elif vway_sell_remain is None:
-                unrealised_pnl = (best_ask - vway_buy_min_qty) * min_qty_traded
+                unrealised_pnl = (best_bid - vway_buy_min_qty) * min_qty_traded
             
             else:
                 unrealised_pnl = 0
