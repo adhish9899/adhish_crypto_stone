@@ -346,7 +346,7 @@ if __name__ == "__main__":
     print("Start time:", start_time)
 
     # sample way to run it. 
-    
+
 
     '''
     mm_trading = market_maker("BTCUSDT", 5, 1, 2, 2)
@@ -358,3 +358,4 @@ if __name__ == "__main__":
             start_time = dt.datetime.now()
             stats_df = stats_df.append(pd.DataFrame(mm_trading.get_stats(), index=["stats"].T))
     '''
+    
